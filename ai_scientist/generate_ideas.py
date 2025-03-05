@@ -84,8 +84,10 @@ def generate_ideas(
     if skip_generation:
         # Load existing ideas from file
         try:
-            with open(osp.join(base_dir, "ideas.json"), "r") as f:
-                ideas = json.load(f)
+            with open(osp.join(base_dir, "ideas.jsonl"), "r") as f:
+                ideas = []
+                for line in f:
+                    ideas.append(json.loads(line))
             print("Loaded existing ideas:")
             for idea in ideas:
                 print(idea)
@@ -159,6 +161,8 @@ def generate_ideas(
                         break
 
             idea_str_archive.append(json.dumps(json_output))
+            with open(osp.join(base_dir, "ideas.jsonl"), "a") as f:
+                f.write(json.dumps(json_output) + "\n")
         except Exception as e:
             print(f"Failed to generate idea: {e}")
             continue
@@ -167,9 +171,6 @@ def generate_ideas(
     ideas = []
     for idea_str in idea_str_archive:
         ideas.append(json.loads(idea_str))
-
-    with open(osp.join(base_dir, "ideas.json"), "w") as f:
-        json.dump(ideas, f, indent=4)
 
     return ideas
 
@@ -285,6 +286,8 @@ def on_backoff(details):
 def search_for_papers(query, result_limit=10, engine="semanticscholar") -> Union[None, List[Dict]]:
     if not query:
         return None
+    print("Searching for papers...")
+    start_time = time.time()
     if engine == "semanticscholar":
         rsp = requests.get(
             "https://api.semanticscholar.org/graph/v1/paper/search",
@@ -307,7 +310,6 @@ def search_for_papers(query, result_limit=10, engine="semanticscholar") -> Union
             return None
 
         papers = results["data"]
-        return papers
     elif engine == "openalex":
         import pyalex
         from pyalex import Work, Works
@@ -347,9 +349,12 @@ def search_for_papers(query, result_limit=10, engine="semanticscholar") -> Union
 
         works: List[Dict] = Works().search(query).get(per_page=result_limit)
         papers: List[Dict[str, str]] = [extract_info_from_work(work) for work in works]
-        return papers
     else:
         raise NotImplementedError(f"{engine=} not supported!")
+    
+    end_time = time.time()
+    print(f"Search took {end_time - start_time:.2f} seconds.")
+    return papers
 
 
 
@@ -426,6 +431,7 @@ def check_idea_novelty(
         novel = False
         msg_history = []
         papers_str = ""
+        recall = False
 
         for j in range(max_num_iterations):
             try:
@@ -444,6 +450,7 @@ def check_idea_novelty(
                         code=code,
                     ),
                     msg_history=msg_history,
+                    recall=recall
                 )
                 if "decision made: novel" in text.lower():
                     print("Decision made: novel after round", j)
@@ -459,9 +466,12 @@ def check_idea_novelty(
 
                 ## SEARCH FOR PAPERS
                 query = json_output["Query"]
+                recall = bool(query)
                 papers = search_for_papers(query, result_limit=10, engine=engine)
                 if papers is None:
                     papers_str = "No papers found."
+                    # print(text)
+                    continue
 
                 paper_strings = []
                 for i, paper in enumerate(papers):
@@ -483,11 +493,8 @@ def check_idea_novelty(
                 continue
 
         idea["novel"] = novel
-
-    # Save results to JSON file
-    results_file = osp.join(base_dir, "ideas.json")
-    with open(results_file, "w") as f:
-        json.dump(ideas, f, indent=4)
+        with open(osp.join(base_dir, "checked_ideas.jsonl"), "a") as f:
+            f.write(json.dumps(idea) + "\n")
 
     return ideas
 

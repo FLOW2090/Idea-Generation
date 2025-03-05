@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import time
 
 import anthropic
 import backoff
@@ -39,6 +40,9 @@ AVAILABLE_LLMS = [
     "deepseek-chat",
     "deepseek-coder",
     "deepseek-reasoner",
+    "ark-deepseek-r1",
+    "thu-deepseek-r1",
+    "sf-deepseek-r1",
     # Google Gemini models
     "gemini-1.5-flash",
     "gemini-1.5-pro",
@@ -132,139 +136,213 @@ def get_response_from_llm(
         client,
         model,
         system_message,
-        print_debug=False,
+        print_debug=True,
         msg_history=None,
         temperature=0.75,
+        recall=False
 ):
     if msg_history is None:
         msg_history = []
 
-    if "claude" in model:
-        new_msg_history = msg_history + [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": msg,
-                    }
-                ],
-            }
-        ]
-        response = client.messages.create(
-            model=model,
-            max_tokens=MAX_NUM_TOKENS,
-            temperature=temperature,
-            system=system_message,
-            messages=new_msg_history,
-        )
-        content = response.content[0].text
-        new_msg_history = new_msg_history + [
-            {
-                "role": "assistant",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": content,
-                    }
-                ],
-            }
-        ]
-    elif model in [
-        "gpt-4o-2024-05-13",
-        "gpt-4o-mini-2024-07-18",
-        "gpt-4o-2024-08-06",
-    ]:
-        new_msg_history = msg_history + [{"role": "user", "content": msg}]
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_message},
-                *new_msg_history,
-            ],
-            temperature=temperature,
-            max_tokens=MAX_NUM_TOKENS,
-            n=1,
-            stop=None,
-            seed=0,
-        )
-        content = response.choices[0].message.content
-        new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
-    elif model in ["o1-preview-2024-09-12", "o1-mini-2024-09-12"]:
-        new_msg_history = msg_history + [{"role": "user", "content": msg}]
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "user", "content": system_message},
-                *new_msg_history,
-            ],
-            temperature=1,
-            max_completion_tokens=MAX_NUM_TOKENS,
-            n=1,
-            seed=0,
-        )
-        content = response.choices[0].message.content
-        new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
-    elif model in ["meta-llama/llama-3.1-405b-instruct", "llama-3-1-405b-instruct"]:
-        new_msg_history = msg_history + [{"role": "user", "content": msg}]
-        response = client.chat.completions.create(
-            model="meta-llama/llama-3.1-405b-instruct",
-            messages=[
-                {"role": "system", "content": system_message},
-                *new_msg_history,
-            ],
-            temperature=temperature,
-            max_tokens=MAX_NUM_TOKENS,
-            n=1,
-            stop=None,
-        )
-        content = response.choices[0].message.content
-        new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
-    elif model in ["deepseek-chat", "deepseek-coder"]:
-        new_msg_history = msg_history + [{"role": "user", "content": msg}]
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_message},
-                *new_msg_history,
-            ],
-            temperature=temperature,
-            max_tokens=MAX_NUM_TOKENS,
-            n=1,
-            stop=None,
-        )
-        content = response.choices[0].message.content
-        new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
-    elif model in ["deepseek-reasoner"]:
-        new_msg_history = msg_history + [{"role": "user", "content": msg}]
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_message},
-                *new_msg_history,
-            ],
-            n=1,
-            stop=None,
-        )
-        content = response.choices[0].message.content
-        new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
-    elif "gemini" in model:
-        new_msg_history = msg_history + [{"role": "user", "content": msg}]
-        gemini_contents = [{"role": "system", "parts": system_message}]
-        for m in new_msg_history:
-            gemini_contents.append({"role": m["role"], "parts": m["content"]})
-        response = client.generate_content(
-            contents=gemini_contents,
-            generation_config=GenerationConfig(
+    print("Getting response from LLM...")
+    start_time = time.time()
+
+    try:
+        if "claude" in model:
+            new_msg_history = msg_history + [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": msg,
+                        }
+                    ],
+                }
+            ]
+            response = client.messages.create(
+                model=model,
+                max_tokens=MAX_NUM_TOKENS,
                 temperature=temperature,
-                max_output_tokens=MAX_NUM_TOKENS,
-                candidate_count=1,
-            ),
-        )
-        content = response.text
-        new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
-    else:
-        raise ValueError(f"Model {model} not supported.")
+                system=system_message,
+                messages=new_msg_history,
+            )
+            content = response.content[0].text
+            new_msg_history = new_msg_history + [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": content,
+                        }
+                    ],
+                }
+            ]
+        elif model in [
+            "gpt-4o-2024-05-13",
+            "gpt-4o-mini-2024-07-18",
+            "gpt-4o-2024-08-06",
+        ]:
+            new_msg_history = msg_history + [{"role": "user", "content": msg}]
+            if recall:
+                new_msg_history += [{"role": "system", "content": system_message}]
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_message},
+                    *new_msg_history,
+                ],
+                temperature=temperature,
+                max_tokens=MAX_NUM_TOKENS,
+                n=1,
+                stop=None,
+                seed=0,
+            )
+            content = response.choices[0].message.content
+            new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
+        elif model in ["o1-preview-2024-09-12", "o1-mini-2024-09-12"]:
+            new_msg_history = msg_history + [{"role": "user", "content": msg}]
+            if recall:
+                new_msg_history += [{"role": "user", "content": system_message}]
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "user", "content": system_message},
+                    *new_msg_history,
+                ],
+                temperature=1,
+                max_completion_tokens=MAX_NUM_TOKENS,
+                n=1,
+                seed=0,
+            )
+            content = response.choices[0].message.content
+            new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
+        elif model in ["meta-llama/llama-3.1-405b-instruct", "llama-3-1-405b-instruct"]:
+            new_msg_history = msg_history + [{"role": "user", "content": msg}]
+            if recall:
+                new_msg_history += [{"role": "system", "content": system_message}]
+            response = client.chat.completions.create(
+                model="meta-llama/llama-3.1-405b-instruct",
+                messages=[
+                    {"role": "system", "content": system_message},
+                    *new_msg_history,
+                ],
+                temperature=temperature,
+                max_tokens=MAX_NUM_TOKENS,
+                n=1,
+                stop=None,
+            )
+            content = response.choices[0].message.content
+            new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
+        elif model in ["deepseek-chat", "deepseek-coder"]:
+            new_msg_history = msg_history + [{"role": "user", "content": msg}]
+            if recall:
+                new_msg_history += [{"role": "system", "content": system_message}]
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_message},
+                    *new_msg_history,
+                ],
+                temperature=temperature,
+                max_tokens=MAX_NUM_TOKENS,
+                n=1,
+                stop=None,
+            )
+            content = response.choices[0].message.content
+            new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
+        elif model in ["deepseek-reasoner"]:
+            new_msg_history = msg_history + [{"role": "user", "content": msg}]
+            if recall:
+                new_msg_history += [{"role": "system", "content": system_message}]
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_message},
+                    *new_msg_history,
+                ],
+                n=1,
+                stop=None,
+            )
+            content = response.choices[0].message.content
+            new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
+        elif model == "ark-deepseek-r1":
+            new_msg_history = msg_history + [{"role": "user", "content": msg}]
+            if recall:
+                new_msg_history += [{"role": "system", "content": system_message}]
+            response = client.chat.completions.create(
+                model="deepseek-r1-250120",
+                messages=[
+                    {"role": "system", "content": system_message},
+                    *new_msg_history,
+                ],
+                temperature=temperature,
+                max_tokens=MAX_NUM_TOKENS,
+                n=1,
+                stop=None,
+            )
+            content = response.choices[0].message.content
+            new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
+        elif model == "thu-deepseek-r1":
+            new_msg_history = msg_history + [{"role": "user", "content": msg}]
+            if recall:
+                new_msg_history += [{"role": "system", "content": system_message}]
+            response = client.chat.completions.create(
+                model="DeepSeek-R1-671B",
+                messages=[
+                    {"role": "system", "content": system_message},
+                    *new_msg_history,
+                ],
+                temperature=temperature,
+                max_tokens=MAX_NUM_TOKENS,
+                n=1,
+                stop=None,
+            )
+            content = response.choices[0].message.content
+            new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
+        elif model == "sf-deepseek-r1":
+            new_msg_history = msg_history + [{"role": "user", "content": msg}]
+            if recall:
+                new_msg_history += [{"role": "system", "content": system_message}]
+            response = client.chat.completions.create(
+                model="deepseek-ai/DeepSeek-R1",
+                messages=[
+                    {"role": "system", "content": system_message},
+                    *new_msg_history,
+                ],
+                temperature=temperature,
+                max_tokens=MAX_NUM_TOKENS,
+                n=1,
+                stop=None,
+            )
+            content = response.choices[0].message.content
+            new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
+        elif "gemini" in model:
+            new_msg_history = msg_history + [{"role": "user", "content": msg}]
+            gemini_contents = [{"role": "system", "parts": system_message}]
+            for m in new_msg_history:
+                gemini_contents.append({"role": m["role"], "parts": m["content"]})
+            if recall:
+                gemini_contents.append({"role": "system", "parts": system_message})
+            response = client.generate_content(
+                contents=gemini_contents,
+                generation_config=GenerationConfig(
+                    temperature=temperature,
+                    max_output_tokens=MAX_NUM_TOKENS,
+                    candidate_count=1,
+                ),
+            )
+            content = response.text
+            new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
+        else:
+            raise ValueError(f"Model {model} not supported.")
+    except Exception as e:
+        print(type(response), response)
+        print(e)
+    
+    end_time = time.time()
+    print(f"Response received in {end_time - start_time:.2f} seconds.")
 
     if print_debug:
         print()
@@ -329,6 +407,24 @@ def create_client(model):
         return openai.OpenAI(
             api_key=os.environ["DEEPSEEK_API_KEY"],
             base_url="https://api.deepseek.com"
+        ), model
+    elif model == "ark-deepseek-r1":
+        print(f"Using OpenAI API with {model}.")
+        return openai.OpenAI(
+            api_key=os.environ["ARK_DEEPSEEK_API_KEY"],
+            base_url="https://ark.cn-beijing.volces.com/api/v3"
+        ), model
+    elif model == "thu-deepseek-r1":
+        print(f"Using OpenAI API with {model}.")
+        return openai.OpenAI(
+            api_key=os.environ["THU_DEEPSEEK_API_KEY"],
+            base_url="https://madmodel.cs.tsinghua.edu.cn/v1"
+        ), model
+    elif model == "sf-deepseek-r1":
+        print(f"Using OpenAI API with {model}.")
+        return openai.OpenAI(
+            api_key=os.environ["SF_DEEPSEEK_API_KEY"],
+            base_url="https://api.siliconflow.cn/v1"
         ), model
     elif model == "llama3.1-405b":
         print(f"Using OpenAI API with {model}.")
